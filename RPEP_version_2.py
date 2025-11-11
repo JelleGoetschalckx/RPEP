@@ -498,3 +498,4 @@ if __name__ == "__main__":
         intertrial_interval=1,  # in seconds
         result_duration=0.5  # in seconds
     )
+

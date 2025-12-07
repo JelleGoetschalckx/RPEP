@@ -43,18 +43,19 @@ def info_GUI() -> tuple:
     """
     info = {
         "Nummer": "",
-        "Leeftijd": ""
+        "Leeftijd": "",
     }
     while not (info["Nummer"].isnumeric() and info["Leeftijd"].isnumeric()):
-        # Only add gender here, otherwise the dropdown menu disappears when reiterating
+        # Only add gender and colorblindness here, otherwise the dropdown menu disappears when reiterating
         info["Gender"] = ["Man", "Vrouw", "X/andere", "Zeg ik liever niet"]
+        info["Leidt u aan kleurenblindheid?"] = ["Ja", "Nee"]
 
         # Show dialogue box
         box = gui.DlgFromDict(dictionary=info, title="Experiment")
         if not box.OK:
             core.quit()
 
-    return info["Nummer"], info["Gender"], info["Leeftijd"]
+    return info["Nummer"], info["Gender"], info["Leeftijd"], info["Leidt u aan kleurenblindheid?"]
 
 
 # For testing/debugging
@@ -196,7 +197,7 @@ class Exp:
         """
         # Settings
         self.devstats = devstats
-        self.part_nr, self.gender, self.age = info_GUI()
+        self.part_nr, self.gender, self.age, self.color_blind = info_GUI()
         # If even participant number: congruent block first
         self.blocks = ["congruent", "incongruent"] if not int(self.part_nr) % 2 else ["incongruent", "congruent"]
 
@@ -480,6 +481,7 @@ class Exp:
             trials.addData("participant_nr", self.part_nr)
             trials.addData("participant_gender", self.gender)
             trials.addData("participant_age", self.age)
+            trials.addData("colorblind", 1 if self.color_blind == "Ja" else 0)
             trials.addData("times_instructions_read", times_instructions_read)
             self.exp_handler.nextEntry()
 

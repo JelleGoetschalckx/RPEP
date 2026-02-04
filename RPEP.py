@@ -602,5 +602,6 @@ if __name__ == "__main__":
         feedback_duration=1.5,  # in seconds
         response_deadline=1,  # in seconds
         intertrial_interval=0.5,  # in seconds
-        n_trials_per_block=8,  # Must be divisible by 8
+        n_trials_per_block=160,  # Must be divisible by 8
     )
+

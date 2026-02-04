@@ -48,7 +48,7 @@ def info_GUI() -> tuple:
     while not (info["Nummer"].isnumeric() and info["Leeftijd"].isnumeric()):
         # Only add gender and colorblindness here, otherwise the dropdown menu disappears when reiterating
         info["Gender"] = ["Man", "Vrouw", "X/andere", "Zeg ik liever niet"]
-        info["Leidt u aan kleurenblindheid?"] = ["Ja", "Nee"]
+        info["Leidt u aan kleurenblindheid?"] = ["Nee", "Ja"]
 
         # Show dialogue box
         box = gui.DlgFromDict(dictionary=info, title="Experiment")
@@ -182,8 +182,10 @@ class Questionnaire:
                 if self.mouse.getPressed()[0]:
                     self.win.winHandle.set_mouse_cursor()
                     return name
+                self.main_exp.escape_check()
             # Reset mouse appearance if not hovering any button
             self.win.winHandle.set_mouse_cursor()
+        self.main_exp.escape_check()
 
 
 # _____ EXPERIMENT _____ #
@@ -262,10 +264,9 @@ class Exp:
         self.n_correct_trials = 0
 
     def communication(self, text_key: str, n_block: int=-1, shapes: tuple=None, colors: tuple=None, extra_info=None, pos: tuple=(0, 0),
-                      wait_resp=True, color="white", size=0.075, flip=True, block_type="", n_trials=-1) -> None:
+                      wait_resp=True, color="white", size=0.075, flip=True, block_type="", n_trials=-1, wait_time=0.0) -> None:
         """
         Displays text messages on screen and waits for keyboard response
-        :param n_trials:
         :param block_type: Congruent or incongruent
         :param extra_info: Extra info to add to text
         :param colors: Extra info: colors this trial
@@ -278,6 +279,7 @@ class Exp:
         :param wait_resp: Waits for response if True (default)
         :param flip: Flip window if true
         :param n_trials: Amount of trials in entire experiment
+        :param wait_time: Duration to pause the game (only if wait_resp=False)
         :return: None
         """
         if colors:
@@ -293,54 +295,55 @@ class Exp:
         if shapes:
             go_shape, nogo_shape = shapes[0], shapes[1]
         else:
-            go_shape = nogo_shape = "d"
-
+            go_shape = nogo_shape = "NULL"
 
         options = {
-            "intro": f"Welkom!\nIn dit experiment werk je in een restaurant dat gespecialiseerd "
-                     f"is in abstracte soep. Je manager kijkt nauwlettend toe en geeft je bonussen of boetes afhankelijk "
-                     f"van je prestaties.\n\n"
+            "intro": f"Welkom!\nIn dit experiment ben je de manager van een restaurant dat gespecialiseerd "
+                     f"is in soep met abstracte figuren. Het is vandaag erg druk dus je helpt je collega's met opdienen.\n\n"
+                     f"Als klanten het juiste bord soep krijgen, zijn ze bereid meer te betalen. Het is uiteraard je taak "
+                     f"om zoveel mogelijk winst te maken.\n\n"
                      f"Druk op spatie voor meer uitleg.",
-            "general": f"Zodra krijg je{' opnieuw ' if n_block else ' '}verschillende borden met soep achter elkaar "
-                       f"gepresenteerd{', maar vandaag serveren we andere kleuren soep.' if n_block else '.'}\n\n"
-                       f"Omdat {punish_color} soep erg duur is om te maken, zal de manager je bij deze soep standaard bestraffen, maar zwaarder als je een fout maakt "
-                       f"(-€1 als je correct handelt, of -€10 als je een fout maakt).\n\n{reward_color.capitalize()} soep "
-                       f"is veel goedkoper, dus hij zal je hierbij altijd belonen, maar meer als je juist handelt (+€10 als je correct handelt, of +€1 als je een fout maakt).\n\n"
+            "general": f"{'NIEUWE INSTRUCTIES! ' if n_block else ''}Zodra krijg je{' opnieuw ' if n_block else ' '}verschillende borden met soep achter elkaar "
+                       f"gepresenteerd{', maar vandaag serveren we andere soep.' if n_block else '.'}\n\n"
+                       f"Omdat {punish_color} soep erg duur is om te maken, maak je hier altijd verlies op. "
+                       f"{reward_color.capitalize()} soep is zeer goedkoop, dus hierop maak je altijd winst.\n\n"
                        f"Wanneer je de soep te zien krijgt, is hij nog niet helemaal afgewerkt. Je moet eerst even wachten "
                        f"tot er figuren op de soep gestrooid worden, dan pas is hij klaar om geserveerd te worden.\n\n"
+                       f"Door telkens een juiste keuze te maken, kan je je winst maximaliseren en je verliezen beperken.\n\n"
                        f"Druk op spatie voor meer informatie.",
-            "congruent": f"Het is jouw taak om de mensen te bedienen die soep met {go_shape} hebben besteld, de soep met "
+            "congruent": f"Vandaag is het jouw taak om de mensen te bedienen die soep met {go_shape} hebben besteld, de soep met "
                          f"{nogo_shape} moet je laten staan voor je collega's. Als je de soep wilt meenemen, moet je zo "
-                         f"snel mogelijk reageren, voor één van je collega's er mee weg is.\n\nJe neemt de soep met {go_shape} mee "
+                         f"snel mogelijk reageren, voor één van je collega's het meeneemt naar de foute tafel.\n\nJe neemt de soep met {go_shape} mee "
                          f"door op spatie te drukken en je laat hem staan door niets te doen.\n\n"
                          f"Druk op spatie voor een korte samenvatting.",
-            "incongruent": f"Vandaag bestelden de gasten alleen maar soep met {nogo_shape}! Helaas is de verantwoordelijke "
-                           f"voor de figuren vandaag een jobstudent, die vaak per ongeluk toch {go_shape} op de soep doet.\n\n"
-                           f"Daarom heeft de manager je de taak gegeven om elke keer dat de jobstudent {go_shape} in de "
-                           f"soep doet, de soep zo snel mogelijk in de vuilnisbak te werpen. De soep met {nogo_shape} wordt geserveerd "
-                           f"door je collega's, deze moet je dus laten staan. Je gooit de soep weg door op de spatiebalk "
+            "incongruent": f"Vandaag bestelden je klanten alleen maar soep met {nogo_shape}! Helaas is de verantwoordelijke "
+                           f"voor de figuren vandaag een jobstudent, die per ongeluk vaak toch {go_shape} op de soep doet.\n\n"
+                           f"Omdat niemand anders voor deze taak opgeleid is, heb je besloten dat je gewoon elk bord soep waar "
+                           f"{go_shape} in belanden, zo snel mogelijk in de vuilnisbak zal werpen. De soep met {nogo_shape} "
+                           f"moet je laten staan, je collega's zullen deze serveren. Je gooit de soep weg door op de spatiebalk "
                            f"te duwen en je laat hem staan door niets te doen.\n\n"
                            f"Druk op spatie voor een korte samenvatting.",
             "overview": f"Kortom:\n\n\n"
-                        f"{reward_color.upper()} soep → Manager BELOONT je, +10 als correct, +1 als fout\n\n"
-                        f"{punish_color.upper()} soep → Manager STRAFT je, -1 als correct, -10 als fout\n\n"
+                        f"{reward_color.upper()} soep → altijd WINST, maar meer als correct\n\n"
+                        f"{punish_color.upper()} soep → altijd VERLIES, maar meer als fout\n\n"
                         f"-----------------\n\n"
+                        f"Vanaf er figuren in de soep liggen, moet je een keuze maken:\n\n"
                         f"{go_shape.upper()} in de soep → Deze moet je SNEL {'MEENEMEN' if block_type == 'congruent' else 'WEGGOOIEN'} (spatie)\n\n"
-                        f"{nogo_shape.upper()} in de soep → Deze moet je LATEN STAAN (niets doen)\n\n\nJe dagloon (in dit experiment) is afhankelijk van je prestatie, je begint op 0.\n"
+                        f"{nogo_shape.upper()} in de soep → Deze moet je LATEN STAAN (niets doen)\n\n\n"
                         f"Druk op spatie om verder te gaan.",
             "questionnaire_intro": "Voor de taak begint, krijg je eerst drie korte vragen (zonder tijdslimiet) om te checken of "
                                    "je de taak goed begrepen hebt.\n\n"
                                    "Druk op spatie om naar de eerste vraag te gaan.",
-            "question1": "Bij welke soep zal je baas je straffen als je een fout maakt?\n(Klik op het juiste antwoord)",
+            "question1": "Op welke kleur soep maak je altijd verlies?\n(Klik op het juiste antwoord)",
             "question2": f"Welke soep moet jij {'meenemen' if block_type == 'congruent' else 'weggooien'}?\n(Klik op het juiste antwoord)",
-            "question3": f"Wat zal er gebeuren als je reageert (door op spatie te drukken)?\n(Klik op het juiste antwoord)",
+            "question3": f"Welke actie voer je uit wanneer je op spatie drukt?\n(Klik op het juiste antwoord)",
             "question_wrong": "Niet al je antwoorden waren correct.\n\nDruk op spatie om terug te keren naar de instructies.",
             "start_trials": f"Zeer goed! Je krijgt {'nu' if not n_block else 'net zoals daarnet'} de soepborden één voor "
-                            f"één gepresenteerd. Denk er aan dat je maar weinig tijd hebt om een keuze te maken, wees dus zo snel mogelijk als je op spatie wilt duwen!\n\n"
+                            f"één gepresenteerd. Denk er aan dat je maar weinig tijd hebt om een keuze te maken, maak dus snel een keuze!\n\n"
                             f"Druk op spatie als je klaar bent om te beginnen.",
             "break": "Tijd voor een pauze. Wanneer je klaar bent om verder te gaan, druk je op spatie voor meer instructies.",
             "end": f"Je hebt het einde van dit experiment bereikt, bedankt om deel te nemen!\n\n"
-                    f"Je maakte in totaal {self.n_correct_trials} van de {n_trials} keer een juiste keuze ({self.n_correct_trials/n_trials*100}%). Daar behaal je een eindeloon mee van €{self.total_score}!\n\n"
+                    f"Je maakte in totaal {self.n_correct_trials} van de {n_trials} keer een juiste keuze ({self.n_correct_trials/n_trials*100}%). Daarmee maakte je restaurant in totaal €{abs(self.total_score)} {'winst' if self.total_score >=0 else 'verlies'}!\n\n"
                     f"Druk op spatie om af te sluiten.",
             "early_quit": "Experiment werd afgesloten met escape.",
             "grabbed": f"{extra_info}\nJe nam de soep mee",
@@ -373,6 +376,20 @@ class Exp:
             if response == "escape":
                 self.communication("early_quit")
                 core.quit()
+        else:
+            core.wait(wait_time)
+            if text_key != "early_quit":
+                self.escape_check()
+
+    def escape_check(self, response=""):
+        if not response:
+            escape = event.getKeys(keyList="escape")
+        else:
+            escape = response
+        if "escape" in escape:
+            self.communication("early_quit", wait_resp=False, wait_time=1)
+            core.quit()
+        return 0
 
     def trial_maker(self, n_trials: int, fix_cross_duration: list, block_type: str) -> tuple:
         """
@@ -445,6 +462,9 @@ class Exp:
             core.wait(trial["fix_cross_time"])
 
             # Put garnish shapes on top
+            self.timer.reset()
+            self.escape_check()
+
             self.draw_stimuli(trial, garnish=True)
 
             # ___ RESPONSE ___
@@ -453,11 +473,8 @@ class Exp:
             response = event.waitKeys(keyList=["space", "escape"], maxWait=response_deadline)
 
             response_time = self.timer.getTime()
+            self.escape_check(response)
             if response:
-                # Stop experiment if "escape" was pressed (check if response is not None first)
-                if response[0] == "escape":
-                    self.communication("early_quit")
-                    core.quit()
                 self.draw_stimuli(trial, garnish=True, bowl_action=True)
 
             # If Go before response_deadline: keep displaying stimulus for remaining time (skips if crossed deadline (negative value))
@@ -465,9 +482,9 @@ class Exp:
 
             # ___ FEEDBACK AND DATA ___
             accuracy, feedback_points, feedback_text = self.outcome_handler(trial, response, response_time)
-            self.communication(feedback_points, wait_resp=False, size=0.5, flip=False)
-            self.communication(feedback_text, extra_info="Correct!" if accuracy else "Fout!", wait_resp=False, pos=(0, -0.5,))
-            core.wait(feedback_duration)
+            self.communication(feedback_points, wait_resp=False, size=0.2, flip=False)
+            self.communication(feedback_text, extra_info="Correct!" if accuracy else "Fout!", wait_resp=False, pos=(0, -0.2,), wait_time=feedback_duration)
+            self.escape_check()
 
             # Add data to datafile
             trials.addData("incentive", trial["incentive"])  # reward/punishment
@@ -557,7 +574,7 @@ class Exp:
             times_instructions_read = 1
             while not all_correct:
                 self.communication(text_key="general", n_block=i, colors=colors)
-                self.communication(text_key=block_type, shapes=shapes, colors=colors)
+                self.communication(text_key=block_type, shapes=shapes, colors=colors, n_block=i)
                 self.communication("overview", shapes=shapes, colors=colors, block_type=block_type)
 
                 # Questionnaire itself
@@ -585,5 +602,5 @@ if __name__ == "__main__":
         feedback_duration=1.5,  # in seconds
         response_deadline=1,  # in seconds
         intertrial_interval=0.5,  # in seconds
-        n_trials_per_block=160,  # Must be divisible by 8
+        n_trials_per_block=8,  # Must be divisible by 8
     )

@@ -1,0 +1,1290 @@
+------------------------------------------------------------------------
+
+---
+title: "Data analysis of [TITLE]"
+format: html
+editor: visual
+---
+
+# **Data analysis of \[TITLE\]**
+
+```{r}
+# Required packages
+if (!require(dplyr, quietly = TRUE)) {install.packages("dplyr")}
+options(dplyr.summarise.inform=FALSE)
+if (!require(tidyr, quietly = TRUE)) {install.packages("tidyr")} 
+if (!require(lattice, quietly = TRUE)) {install.packages("lattice")}
+if (!require(ggplot2, quietly = TRUE)) {install.packages("ggplot2")}
+if (!require(ggrain, quietly = TRUE)) {install.packages("ggrain")}
+if (!require(ggpubr, quietly = TRUE)) {install.packages("ggpubr")}
+if (!require(carData, quietly = TRUE)) {install.packages("carData")}
+if (!require(brms, quietly = TRUE)) {install.packages("brms")}
+if (!require(ggeffects, quietly = TRUE)) {install.packages("ggeffects")}
+
+```
+
+## Data, preprocessing, filtering & demographics
+
+```{r}
+df_data <- read.csv("https://raw.githubusercontent.com/JelleGoetschalckx/RPEP/refs/heads/main/data_all.csv")
+
+df_data$outcome[df_data$outcome == "punishment"] <- "loss"
+df_data$framing <- factor(df_data$framing)
+df_data$shape <- factor(df_data$shape)
+df_data$color <- factor(df_data$color)
+df_data$outcome <- factor(df_data$outcome)
+df_data$correct_response <- factor(df_data$correct_response)
+df_data$given_response <- factor(df_data$given_response)
+df_data$feedback <- factor(df_data$feedback)
+df_data$gender <- factor(df_data$gender)
+df_data$colorblind <- factor(df_data$colorblind)
+df_data$first_framing <- factor(df_data$first_framing)
+
+options(contrasts = c("contr.sum", "contr.poly"))
+df_data$outcome <- relevel(df_data$outcome, "reward")
+df_data$framing <- relevel(df_data$framing, "congruent")
+df_data$correct_response <- relevel(df_data$correct_response, "Go")
+
+```
+
+### Exclusion criteria
+
+#### Exclusion criterion 1: removal of participants with an accuracy 3 SD lower than mean
+
+```{r}
+# Accuracy 3 standard deviations from mean
+exclusion_crit_1 <- df_data |>
+  group_by(nr) |>
+  summarise(
+    mean = mean(accuracy),
+    sd = sd(accuracy)
+  ) |>
+  ungroup() |>
+  mutate(
+    group_sd = sd(mean),
+    group_mean = mean(mean)
+  ) |>
+  mutate(
+    z = (mean - group_mean) / group_sd
+  ) |> 
+  filter(z < -3)
+
+```
+
+```{r}
+# Remove these participants from data
+df_data <- df_data |>
+  filter(!(nr %in% (exclusion_crit_1)$nr))
+
+# Participants 42 & 103 removed (total of 640 trials)
+
+n_trials <- 320
+n <- as.numeric(nrow(df_data)) / n_trials
+
+```
+
+#### Exclusion criterion 2: same response on 90% of trials
+
+```{r}
+exclusion_crit_2 <- data.frame((
+  df_data |>
+    group_by(nr) |>
+    count(given_response) |>
+    mutate(n = n / n_trials) |>
+    filter(n > 0.9 | n < 0.1)
+)$nr)
+
+### None found
+
+```
+
+#### Exclusion criterion 3: implausibly fast reaction times (below 200 ms)
+
+```{r}
+exclusion_crit_3 <- df_data |>
+  filter(rt<=0.2)
+cat("Participant with the highest rate of too fast responses answered implausibly fast in", round(max(table(exclusion_crit_3$nr))/(n_trials/2)*100), "% of Go-trials")
+
+cat("\n\nTotal amount of removed trials (response faster than 200ms):", nrow(exclusion_crit_3))
+
+```
+
+```{r}
+## Remove trials with responses faster than 200ms
+
+df_data <- df_data |>
+  filter(rt>0.2 | is.na(rt))
+
+# 53 trials removed
+
+```
+
+Total amount of removed trials: (640 + 53) = 693
+
+### Demographics
+
+```{r}
+# Create dataframe with one row per participant and their summarized data
+df_indiv_data <- df_data |>
+  group_by(nr, framing) |>
+  summarise(
+    across(c(age, gender, colorblind, was_first_exp), first), 
+    acc = mean(accuracy),
+    rt = mean(rt, na.rm = TRUE),
+    times_read = first(times_instructions_read)
+  ) |>
+  pivot_wider(
+    id_cols = c(nr, age, gender, colorblind, was_first_exp),
+    names_from = framing,
+    values_from = c(acc, rt, times_read),
+  ) |>
+  mutate(
+    mean_acc = mean(c(acc_congruent, acc_incongruent)),
+    mean_rt = mean(c(rt_congruent, rt_incongruent)),
+    age = replace(age, age == 0, NA)
+  ) |>
+  relocate(
+    c(
+      nr,
+      age,
+      gender,
+      colorblind,
+      acc_congruent,
+      acc_incongruent,
+      mean_acc,
+      rt_congruent,
+      rt_incongruent,
+      mean_rt,
+      was_first_exp
+    )
+  )
+
+```
+
+```{r}
+# Print demographics of participants
+cat("Age mean:", mean(df_indiv_data$age, na.rm=TRUE), "| Standard deviation:", sd(df_indiv_data$age, na.rm=TRUE), "\n\n")
+cat("Table of reported ages:")
+table(df_indiv_data$age, useNA = "always")
+
+cat("\n\nTables of reported gender and proportion (%):")
+table(df_indiv_data$gender)
+round(prop.table(table(df_indiv_data$gender)) * 100, 2)
+
+cat("\n\n# Colorblind participants:", levels(df_indiv_data$colorblind))
+
+```
+
+### Difference in amount of time the instructions were read between framings
+
+```{r}
+mean(df_indiv_data$times_read_congruent)
+sd(df_indiv_data$times_read_congruent)
+
+mean(df_indiv_data$times_read_incongruent)
+sd(df_indiv_data$times_read_incongruent)
+
+t.test(df_indiv_data$times_read_congruent,
+       df_indiv_data$times_read_incongruent,
+       paired = TRUE)
+
+# Result: No significant difference
+```
+
+### Effect of starting with current experiment or after other experiment (e.g. fatigue)
+
+```{r}
+exp_as_1st <- df_indiv_data |> filter(was_first_exp == 1)
+cat("_Exp as 1st_\n")
+cat("Acc (M, SD)\n")
+mean(exp_as_1st$mean_acc)
+sd(exp_as_1st$mean_acc)
+cat("RT (M, SD)\n")
+mean(exp_as_1st$mean_rt)
+sd(exp_as_1st$mean_rt)
+
+exp_as_2nd <- df_indiv_data |> filter(was_first_exp == 0)
+cat("_Exp as 2nd_\n")
+cat("Acc (M, SD)\n")
+mean(exp_as_2nd$mean_acc)
+sd(exp_as_2nd$mean_acc)
+cat("RT (M, SD)\n")
+mean(exp_as_2nd$mean_rt)
+sd(exp_as_2nd$mean_rt)
+
+t.test(exp_as_1st$mean_acc, exp_as_2nd$mean_acc)
+
+t.test(exp_as_1st$mean_rt, exp_as_2nd$mean_rt)
+
+```
+
+## Plots
+
+```{r}
+# Function for plot creation
+raincloud_plot <- function(df, df_sd, type) {
+  geom_rain_layer <- if (type == "rt") {
+    geom_rain(
+      alpha = .8,
+      rain.side = "l",
+      point.args = list(alpha = 0.5),
+      boxplot.args.pos = list(width = 0.05, position = position_nudge(x = 0.13)),
+      violin.args.pos = list(
+        side = "r",
+        width = 0.8,
+        position = position_nudge(x = 0.2)
+      )
+    )
+  } else {
+    geom_rain(
+      alpha = .7,
+      rain.side = "l",
+      point.args = list(alpha = 0.3),
+      point.args.pos = list(position = position_jitter(
+        width = 0.08,
+        height = 0.0035,
+        seed = 1
+      )), 
+      boxplot.args = list(
+        color = NA,
+        fill = NA
+      ),
+      violin.args.pos = list(
+        side = "r",
+        width = 1,
+        position = position_nudge(x = 0.15)
+      )
+    )
+  }
+  return (
+    ggplot(
+      df,
+      aes(x = response_and_outcome, y = mean, fill = response_and_outcome)
+    ) +
+      geom_rain_layer +
+      stat_summary(
+        fun = "mean",
+        geom = "point",
+        position = position_nudge(x = .2)
+      ) +
+      geom_errorbar(
+        inherit.aes = FALSE,
+        df_sd,
+        mapping = aes(x = response_and_outcome, ymin = CI_lower, ymax = CI_higher),
+        width = 0.1,
+        position = position_nudge(x = .2)
+    )
+  )
+}
+
+# Function for cleaning up plot visuals
+plot_cleaner <- function(plot, colors, ylims = c(0, 1), label_data) {
+  plot +
+    coord_cartesian(ylim = c(ylims[1], ylims[2])) +
+    labs(fill = NULL) +
+    rremove("xlab") + rremove("ylab") +
+    theme(
+      panel.background = element_rect(fill = "white"),
+      panel.grid.major = element_line(colour = "lightgrey"),
+      panel.grid.minor = element_line(colour = "lightgrey"),
+      panel.grid.major.x = element_line(colour = "white")
+    ) +
+    scale_fill_manual(values = colors) +
+    theme(legend.position = "none") +
+    scale_x_discrete(labels = if (length(colors) == 4) {
+      c(
+        paste(
+          "Go\nReward\n",
+          "M =", round(label_data[1, 3], 3),
+          "\nSD =", round(label_data[1, 2], 3)
+        ),
+        paste(
+          "Go\nLoss\n",
+          "M =", round(label_data[2, 3], 3),
+          "\nSD =", round(label_data[2, 2], 3)
+        ),
+        paste(
+          "NoGo\nReward\n",
+          "M =", round(label_data[3, 3], 3),
+          "\nSD =", round(label_data[3, 2], 3)
+        ),
+        paste(
+          "NoGo\nLoss\n",
+          "M =", round(label_data[4, 3], 3),
+          "\nSD =", round(label_data[4, 2], 3)
+        )
+      )
+    } else {
+      c(
+        paste(
+          "Go Reward\n",
+          "M =", round(label_data[1, 3], 3),
+          "\nSD =", round(label_data[1, 2], 3)
+        ),
+        paste(
+          "Go Loss\n",
+          "M =", round(label_data[2, 3], 3),
+          "\nSD =", round(label_data[2, 2], 3)
+        )
+      )
+    })
+}
+
+# Function for changing colors of plots
+recolor_plot <- function(plot, colors) {
+  return(suppressMessages(plot + scale_fill_manual(values = colors)))
+}
+
+# Function for placing plots next to eachother
+combine_plots <- function(plot1, plot2, type) {
+  plot1_labeled <- annotate_figure(
+    plot1, 
+    top = text_grob("Congruent framing", vjust = ifelse(type=="rt", 2.3, 1.25))
+  )
+  plot2_labeled <- annotate_figure(
+    plot2, 
+    top = text_grob("Incongruent framing", vjust = ifelse(type=="rt", 2.3, 1.25))
+  )
+  plot_combined <- ggarrange(plot1_labeled, plot2_labeled, labels = NULL)
+  annotate_figure(
+    plot_combined,
+    left = if (type == "rt") "Response time (ms)" else "Accuracy (%)"
+  )
+}
+
+```
+
+### Plot of reaction times
+
+```{r}
+# Make dataframes to plot
+rt_congruent <- df_data |>
+  filter(framing=="congruent", correct_response=="Go") |>
+  group_by(nr, outcome, correct_response) |>
+  summarise(
+    mean = mean(rt, na.rm=TRUE),
+    sd = sd(rt, na.rm=TRUE)
+  ) |>
+  mutate(response_and_outcome = factor(paste(correct_response, outcome) , levels = c("Go reward", "Go loss")))
+
+sd_rt_congruent <- rt_congruent |>
+  group_by(response_and_outcome) |>
+  summarise(
+    sd = sd(mean, na.rm=TRUE),
+    total_mean = mean(mean, na.rm=TRUE),
+    CI_lower = total_mean - (sd * 1.96)/sqrt(n),
+    CI_higher = total_mean + (sd * 1.96)/sqrt(n)
+  )
+
+rt_incongruent <- df_data |>
+  filter(framing=="incongruent", correct_response=="Go") |>
+  group_by(nr, outcome, correct_response) |>
+  summarise(
+    mean = mean(rt, na.rm=TRUE),
+    sd = sd(rt, na.rm=TRUE)
+  ) |>
+  mutate(response_and_outcome = factor(paste(correct_response, outcome), levels = c("Go reward", "Go loss")))
+
+sd_rt_incongruent <- rt_incongruent |>
+  group_by(response_and_outcome) |>
+  summarise(
+    sd = sd(mean, na.rm=TRUE),
+    total_mean = mean(mean, na.rm=TRUE),
+    CI_lower = total_mean - (sd * 1.96)/sqrt(n),
+    CI_higher = total_mean + (sd * 1.96)/sqrt(n)
+  )
+
+```
+
+```{r}
+plot_rt_congruent <- raincloud_plot(rt_congruent, sd_rt_congruent, "rt") +
+  scale_y_continuous(labels = function(x)x * 1000)
+
+plot_rt_incongruent <- raincloud_plot(rt_incongruent, sd_rt_incongruent, "rt") + 
+  scale_y_continuous(labels = function(x)x * 1000)
+
+plot_rt_congruent <- plot_cleaner(
+  plot_rt_congruent, 
+  colors = c("purple", "blue"), 
+  ylims=c(0.28, 0.62),
+  label_data = sd_rt_congruent
+)
+plot_rt_incongruent <- plot_cleaner(
+  plot_rt_incongruent, 
+  colors = c("yellow", "pink"), 
+  ylims=c(0.28, 0.62),
+  label_data = sd_rt_incongruent
+)
+
+rt_plot <- combine_plots(plot_rt_congruent, plot_rt_incongruent, type="rt")
+rt_plot
+
+```
+
+### Plot of accuracy
+
+```{r}
+acc_congruent <- df_data |>
+  filter(framing == "congruent") |>
+  group_by(nr, outcome, correct_response) |>
+  summarise(
+    mean = mean(accuracy, na.rm = TRUE),
+    sd = sd(accuracy, na.rm = TRUE)
+  ) |>
+  mutate(response_and_outcome = factor(
+    paste(correct_response, outcome),
+    levels = c("Go reward", "Go loss", "NoGo reward", "NoGo loss")
+  ))
+
+sd_acc_congruent <- acc_congruent |>
+  group_by(response_and_outcome) |>
+  summarise(
+    sd = sd(mean, na.rm = TRUE),
+    total_mean = mean(mean, na.rm = TRUE),
+    CI_lower = total_mean - 1.96 * sd / sqrt(n),
+    CI_higher = total_mean + 1.96 * sd / sqrt(n)
+  )
+
+acc_incongruent <- df_data |>
+  filter(framing == "incongruent") |>
+  group_by(nr, outcome, correct_response) |>
+  summarise(
+    mean = mean(accuracy, na.rm = TRUE),
+    sd = sd(accuracy, na.rm = TRUE)
+  ) |>
+  mutate(response_and_outcome = factor(
+    paste(correct_response, outcome),
+    levels = c("Go reward", "Go loss", "NoGo reward", "NoGo loss")
+  ))
+
+sd_acc_incongruent <- acc_incongruent |>
+  group_by(response_and_outcome) |>
+  summarise(
+    sd = sd(mean, na.rm = TRUE),
+    total_mean = mean(mean, na.rm = TRUE),
+    CI_lower = total_mean - 1.96 * sd / sqrt(n),
+    CI_higher = total_mean + 1.96 * sd / sqrt(n)
+  )
+
+```
+
+```{r}
+plot_acc_congruent <- raincloud_plot(acc_congruent, sd_acc_congruent, "acc") +
+  scale_y_continuous(labels = function(x)x * 100)
+
+plot_acc_incongruent <- raincloud_plot(acc_incongruent, sd_acc_incongruent, "acc") +
+  scale_y_continuous(labels = function(x)x * 100)
+
+
+plot_acc_congruent <- plot_cleaner(
+  plot_acc_congruent, 
+  colors = c("purple", "blue", "purple", "blue"), 
+  ylims=c(0.85, 1),
+  label_data = sd_acc_congruent
+)
+plot_acc_incongruent <- plot_cleaner(
+  plot_acc_incongruent, 
+  colors = c("yellow", "pink", "yellow", "pink"), 
+  ylims=c(0.85, 1),
+  label_data = sd_acc_incongruent
+)
+
+acc_plot <- combine_plots(plot_acc_congruent, plot_acc_incongruent, type="acc")
+acc_plot
+
+```
+
+### Log distribution of RT fits normal distribution better
+
+```{r}
+ggqqplot((df_data |> filter(!is.na(rt)))$rt)
+ggqqplot(log((df_data |> filter(!is.na(rt)))$rt))
+
+```
+
+## Linear Mixed Models
+
+```{r}
+# Uncomment to run, recommended to run chunk below instead
+# fit_acc <- afex::mixed(
+#   # Fixed effects
+#   accuracy ~ framing * correct_response * outcome + (framing * first_framing) +
+#   # Random effects
+#   (framing * correct_response * outcome | nr),
+#   # Data, binomial for binary accuracy
+#   data = df_data,
+#   family = binomial,
+#   method = "LRT",
+#   control = lme4::glmerControl(
+#     optCtrl = list(maxfun = 100000),
+#     calc.derivs = FALSE
+#   )
+# )
+
+```
+
+```{r}
+download.file("https://raw.githubusercontent.com/JelleGoetschalckx/RPEP/main/models/fit_acc_model", destfile = "fit_acc_model.rds", mode = "wb")
+fit_acc <- readRDS("fit_acc_model.rds")
+summary(fit_acc)
+
+```
+
+```{r}
+# Uncomment to run, recommended to run chunk below instead
+# fit_rt <- afex::mixed(
+#   # Fixed effects (log of rt for more normally distributed rt)
+#   log(rt) ~ framing * outcome + (framing * first_framing) +
+#   # Random effects
+#   (framing * outcome | nr),
+#   # Data
+#   data = df_data |> filter(correct_response == "Go") |> filter(!is.na(rt)),
+#   # Settings
+#   control = lme4::lmerControl(
+#     optimizer = "bobyqa",
+#     optCtrl = list(maxfun = 100000),
+#     calc.derivs = FALSE
+#   )
+# )
+
+```
+
+```{r}
+download.file("https://raw.githubusercontent.com/JelleGoetschalckx/RPEP/main/models/fit_rt_model", destfile = "fit_rt_model.rds", mode = "wb")
+fit_rt <- readRDS("fit_rt_model.rds")
+summary(fit_rt)
+
+```
+
+Below, hypotheses are tested. The used contrasts can be found below, hypothesis-irrelevant factors were always left out by multiplying it with 0.
+
+```{r}
+contrasts(df_data$framing)
+contrasts(df_data$correct_response)
+contrasts(df_data$outcome)
+contrasts(df_data$first_framing)
+
+```
+
+### Hypothesis 1: Replication of Pavlovian Biases in the Congruent Framing
+
+1.1 G-R trials will yield more accurate responses than G-L trials.
+
+```{r}
+# Accuracy G-R vs. G-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                     1           1           | 0
+# correct_response            1           1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:correct_response    1           1           | 0
+# framing:outcome             1          -1           | 2
+# correct_response:outcome    1          -1           | 2
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome   1          -1           | 2
+
+L_h1.1 <- c(0, 0, 0, 2, 0, 0, 2, 2, 0, 2)
+
+# Hypothesis test
+car::linearHypothesis(fit_acc$full_model, L_h1.1)
+
+# Plot
+recolor_plot(plot_acc_congruent, c("red", "red", "white", "white"))
+
+# Result: significant, reflects Pavlovian bias
+
+```
+
+1.2 G-R trials will yield faster response times than G-L trials.
+
+```{r}
+# RT G-R vs. G-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                     1           1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:outcome             1          -1           | 2
+# framing:first_framing       0           0           | 0
+
+L_h1.2 <- c(0, 0, 2, 0, 2, 0)
+
+# Hypothesis test
+car::linearHypothesis(fit_rt$full_model, L_h1.2, test = "F")
+
+# Plot
+combine_plots(
+  recolor_plot(plot_rt_congruent, c("red", "red")),
+  recolor_plot(plot_rt_incongruent, c("white", "white")),
+  type = "rt"
+)
+
+# Result: significant, reflects Pavlovian bias
+
+```
+
+1.3 NG-L trials will yield more accurate responses than NG-R trials.
+
+```{r}
+# Accuracy NG-R vs. NoGo L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                     1           1           | 0
+# correct_response           -1          -1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:correct_response   -1          -1           | 0
+# framing:outcome             1          -1           | 2
+# correct_response:outcome   -1           1           |-2
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome  -1           1           |-2
+
+L_h1.3 <- c(0, 0, 0, 2, 0, 0, 2, -2, 0, -2)
+
+# Hypothesis test
+car::linearHypothesis(fit_acc$full_model, L_h1.3)
+
+# Plot
+recolor_plot(plot_acc_congruent, c("white", "white", "red", "red"))
+
+# Result: significant, reflects Pavlovian bias
+
+```
+
+### Hypothesis 2: Collapse of Pavlovian Bias in the Incongruent Framing
+
+2.1 G-R trials will yield equally or less accurate responses compared to G-L trials.
+
+```{r}
+# Accuracy G-R vs. G-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                    -1          -1           | 0
+# correct_response            1           1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:correct_response   -1          -1           | 0
+# framing:outcome            -1           1           |-2
+# correct_response:outcome    1          -1           | 2
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome  -1           1           |-2
+
+L_h2.1 <- c(0, 0, 0, 2, 0, 0, -2, 2, 0, -2)
+
+# Hypothesis test
+car::linearHypothesis(fit_acc$full_model, L_h2.1)
+
+# Plot
+recolor_plot(plot_acc_incongruent, c("red", "red", "white", "white"))
+
+# Result: not significant, reflects collapse of Pavlovian bias
+
+```
+
+2.2 G-R trials will yield equally or slower response times compared to G-L trials.
+
+```{r}
+# RT G-R vs. G-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                    -1          -1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:outcome            -1           1           |-2
+# framing:first_framing       0           0           | 0
+
+L_h2.2 <- c(0, 0, 2, 0, -2, 0)
+
+# Hypothesis test
+car::linearHypothesis(fit_rt$full_model, L_h2.2, test = "F")
+
+# Plot
+combine_plots(
+  recolor_plot(plot_rt_congruent, c("white", "white")),
+  recolor_plot(plot_rt_incongruent, c("red", "red")),
+  type = "rt"
+)
+
+# Result: not significant, reflects collapse of Pavlovian bias
+
+```
+
+2.3 NG-R trials will yield equally or less accurate responses compared to NG-L trials.
+
+```{r}
+# Accuracy NG-R vs. NG-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                    -1          -1           | 0
+# correct_response           -1          -1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:correct_response    1           1           | 0
+# framing:outcome            -1           1           |-2
+# correct_response:outcome   -1           1           |-2
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome   1          -1           | 2
+
+L_h2.3 <- c(0, 0, 0, 2, 0, 0, -2, -2, 0, 2)
+
+# Hypothesis test
+car::linearHypothesis(fit_acc$full_model, L_h2.3)
+
+# Plot
+recolor_plot(plot_acc_incongruent, c("white", "white", "red", "red"))
+
+# Result: significant, but effect goes the other way; reflects opposite of Pavlovian bias
+
+```
+
+### Hypothesis 3: Significant difference in Pavlovian bias effects
+
+3.1 There is a difference in Pavlovian bias between the Congruent and Incongruent framing for accuracy in G-R vs. G-L trials.
+
+```{r}
+# Accuracy Congruent vs. Incongruent for G-R vs. G-L
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     0           0           | 0
+# correct_response            0           0           | 0
+# outcome                     2           2           | 0
+# first_framing               0           0           | 0
+# framing:correct_response    0           0           | 0
+# framing:outcome             2          -2           | 4
+# correct_response:outcome    2           2           | 0
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome   2          -2           | 4
+
+L_h3.1 <- L_h1.1 - L_h2.1
+
+# Hypothesis test
+car::linearHypothesis(fit_acc$full_model, L_h3.1)
+
+# Plots
+combine_plots(
+  recolor_plot(plot_acc_congruent, c("brown", "brown", "white", "white")),
+  recolor_plot(plot_acc_incongruent, c("red", "red", "white", "white")),
+  type = "acc"
+)
+
+# Result: significant difference in Pavlovian bias effect, indicating collapse
+
+```
+
+3.2 There is a difference in Pavlovian bias between the Congruent and Incongruent framing for response times in G-R vs. G-L trials.
+
+```{r}
+# RT Congruent vs. Incongruent for G-R vs. G-L
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     0           0           | 0
+# outcome                     2           2           | 0
+# first_framing               0           0           | 0
+# framing:outcome             2          -2           | 4
+# framing:first_framing       0           0           | 0
+
+L_h3.2 <- L_h1.2 - L_h2.2
+
+# Hypothesis test
+car::linearHypothesis(fit_rt$full_model, L_h3.2)
+
+# Plots
+combine_plots(
+  recolor_plot(plot_rt_congruent, c("brown", "brown")),
+  recolor_plot(plot_rt_incongruent, c("red", "red")),
+  type = "rt"
+)
+
+# Result: significant difference in Pavlovian bias effect, indicating collapse
+
+
+```
+
+3.3 There is a difference in Pavlovian bias between the Congruent and Incongruent framing for accuracy in NG-R vs. NG-L trials.
+
+```{r}
+# Accuracy Congruent vs. Incongruent for NG-R vs. NG-L
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     0           0           | 0
+# correct_response            0           0           | 0
+# outcome                     2           2           | 0
+# first_framing               0           0           | 0
+# framing:correct_response    0           0           | 0
+# framing:outcome             2          -2           | 4
+# correct_response:outcome   -2          -2           | 0
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome  -2           2           |-4
+
+L_h3.3 <- L_h1.3 - L_h2.3
+
+# Hypothesis test
+car::linearHypothesis(fit_acc$full_model, L_h3.3)
+
+# Plots
+combine_plots(
+  recolor_plot(plot_acc_congruent, c("white", "white", "brown", "brown")),
+  recolor_plot(plot_acc_incongruent, c("white", "white", "red", "red")),
+  type = "acc"
+)
+
+# Result: !!
+
+```
+
+### Hypothesis 4: Interaction effect framing and first framing
+
+```{r}
+L_h4_acc <- c(0, 0, 0, 0, 0, 0, 0, 0, 1, 0)
+car::linearHypothesis(fit_acc$full_model, L_h4_acc)
+
+L_h4_rt <- c(0, 0, 0, 0, 0, 1)
+car::linearHypothesis(fit_rt$full_model, L_h4_rt)
+
+# Significant effect, but this is likely due to practice effects. This is visible in the plots below.
+
+```
+
+```{r}
+interaction.plot(
+  x.factor = factor(df_data$framing==df_data$first_framing, levels=c(TRUE, FALSE)),
+  xlab = "",
+  trace.factor = df_data$first_framing,
+  trace.label = "First framing",
+  response = df_data$accuracy,
+  ylab = "Accuracy (%)",
+  col = c("pink", "blue"),
+  lty = 1,
+  lwd = 2,
+  xaxt = "n"
+)
+mtext("Time", side = 1, line = 1)
+
+interaction.plot(
+  x.factor = df_data$trial_nr,
+  xlab = "",
+  trace.factor = df_data$first_framing,
+  trace.label = "First framing",
+  response = df_data$accuracy,
+  ylab = "Accuracy (%)",
+  col = c("pink", "blue"),
+  lty = 1,
+  lwd = 2,
+  xaxt = "n"
+)
+mtext("Time", side = 1, line = 1)
+
+interaction.plot(
+  x.factor = factor((df_data|>filter(!is.na(rt)))$framing==(df_data|>filter(!is.na(rt)))$first_framing, levels=c(TRUE, FALSE)),
+  xlab = "",
+  trace.factor = (df_data|>filter(!is.na(rt)))$first_framing,
+  trace.label = "First framing",
+  response = (df_data|>filter(!is.na(rt)))$rt,
+  ylab = "Response time (ms)",
+  col = c("pink", "blue"),
+  lty = 1,
+  lwd = 2,
+  xaxt = "n"
+)
+mtext("Time", side = 1, line = 1)
+
+interaction.plot(
+  x.factor = (df_data|>filter(!is.na(rt)))$trial_nr,
+  xlab = "",
+  trace.factor = (df_data|>filter(!is.na(rt)))$first_framing,
+  trace.label = "First framing",
+  response = (df_data|>filter(!is.na(rt)))$rt,
+  ylab = "Response time (ms)",
+  col = c("pink", "blue"),
+  lty = 1,
+  lwd = 2,
+  xaxt = "n"
+)
+mtext("Time", side = 1, line = 1)
+
+```
+
+## Bayesian models
+
+```{r}
+# Uncomment to run, recommended to run chunk below instead
+# options(mc.cores=4) # -> be carefull with adjusting this setting
+# fit_acc_bayesian <- brm(
+#   accuracy ~ framing * outcome * correct_response + first_framing * framing +
+#   (framing * outcome * correct_response|nr),
+#   data = df_data,
+#   family = bernoulli(),
+#   chains = 4,
+#   iter = 5500,
+#   warmup = 500,
+#   seed = 1
+# )
+
+```
+
+```{r}
+download.file(
+  "https://media.githubusercontent.com/media/JelleGoetschalckx/RPEP/main/models/fit_acc_bayesian",
+  destfile = "fit_acc_bayesian.rds",
+  mode = "wb"
+)
+fit_acc_bayesian <- readRDS("fit_acc_bayesian.rds")
+
+summary(fit_acc_bayesian)
+
+```
+
+```{r}
+# Uncomment to run, recommended to run chunk below instead
+# options(mc.cores=4) # -> be carefull with adjusting this setting
+# fit_rt_bayesian <- brm(
+#   rt ~ framing * outcome + (framing * first_framing) +
+#   (framing * outcome | nr),
+#   data = df_data |> filter(correct_response == "Go") |> filter(!is.na(rt)),
+#   chains = 4,
+#   family = shifted_lognormal(),
+#   iter = 5500,
+#   warmup = 500,
+#   seed = 1
+# )
+
+```
+
+```{r}
+download.file(
+  "https://media.githubusercontent.com/media/JelleGoetschalckx/RPEP/main/models/fit_rt_bayesian",
+  destfile = "fit_rt_bayesian.rds",
+  mode = "wb"
+)
+fit_rt_bayesian <- readRDS("fit_rt_bayesian.rds")
+
+summary(fit_rt_bayesian)
+
+```
+
+### Hypothesis 1: Replication of Pavlovian Biases in the Congruent Framing
+
+1.1 G-R trials will yield more accurate responses than G-L trials.
+
+```{r}
+# Accuracy G-R vs. G-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                     1           1           | 0
+# correct_response            1           1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:correct_response    1           1           | 0
+# framing:outcome             1          -1           | 2
+# correct_response:outcome    1          -1           | 2
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome   1          -1           | 2
+
+
+coef(fit_rt_bayesian)
+L_h1.1_bayesian <- "
+  2 * outcome1  + 
+  2 * framing1:outcome1 + 
+  2 * outcome1:correct_response1 + 
+  2 * framing1:outcome1:correct_response1 
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_acc_bayesian, L_h1.1_bayesian)
+
+# Plot
+recolor_plot(plot_acc_congruent, c("red", "red", "white", "white"))
+
+# Result: proof for Pavlovian bias
+
+```
+
+1.2 G-R trials will yield faster response times than G-Ltrials.
+
+```{r}
+# RT G-R vs. G-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                     1           1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:outcome             1          -1           | 2
+# framing:first_framing       0           0           | 0
+
+L_h1.2_bayesian <- "
+  2 * outcome1 +
+  2 * framing1:outcome1
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_rt_bayesian, L_h1.2_bayesian)
+
+# Plot
+combine_plots(
+  recolor_plot(plot_rt_congruent, c("red", "red")),
+  recolor_plot(plot_rt_incongruent, c("white", "white")),
+  type = "rt"
+)
+
+# Result: proof for Pavlovian bias
+
+```
+
+1.3 NG-L trials will yield more accurate responses than NG-R trials.
+
+```{r}
+# Accuracy NG-R vs. NoGo L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                     1           1           | 0
+# correct_response           -1          -1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:correct_response   -1          -1           | 0
+# framing:outcome             1          -1           | 2
+# correct_response:outcome   -1           1           |-2
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome  -1           1           |-2
+
+L_h1.3_bayesian <- "
+  2 * outcome1 + 
+  2 * framing1:outcome1 + 
+  -2 * outcome1:correct_response1 + 
+  -2 * framing1:outcome1:correct_response1 
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_acc_bayesian, L_h1.3_bayesian)
+
+# Plot
+recolor_plot(plot_acc_congruent, c("white", "white", "red", "red"))
+
+# Result: no proof for Pavlovian bias
+
+```
+
+### Hypothesis 2: Collapse of Pavlovian Bias in the Incongruent Framing
+
+2.1 G-R trials will yield equally or less accurate responses compared to G-L trials.
+
+```{r}
+# Accuracy G-R vs. G-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                    -1          -1           | 0
+# correct_response            1           1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:correct_response   -1          -1           | 0
+# framing:outcome            -1           1           |-2
+# correct_response:outcome    1          -1           | 2
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome  -1           1           |-2
+
+L_h2.1_bayesian <- "
+  2 * outcome1  + 
+  -2 * framing1:outcome1 + 
+  2 * outcome1:correct_response1 + 
+  -2 * framing1:outcome1:correct_response1 
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_acc_bayesian, L_h2.1_bayesian)
+
+# Plot
+recolor_plot(plot_acc_incongruent, c("red", "red", "white", "white"))
+
+# Result: proof for collapse of Pavlovian bias
+
+```
+
+2.2 G-R trials will yield equally or slower response times compared to G-L trials.
+
+```{r}
+# RT Go-T vs. G-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                    -1          -1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:outcome            -1           1           |-2
+# framing:first_framing       0           0           | 0
+
+L_h2.2_bayesian <- "
+  2 * outcome1 +
+  -2 * framing1:outcome1
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_rt_bayesian, L_h2.2_bayesian)
+
+# Plot
+combine_plots(
+  recolor_plot(plot_rt_congruent, c("white", "white")),
+  recolor_plot(plot_rt_incongruent, c("red", "red")),
+  type = "rt"
+)
+
+# Result: proof for collapse of Pavlovian bias
+
+```
+
+2.3 NG-R trials will yield equally or less accurate responses compared to NG-L trials.
+
+```{r}
+# Accuracy NG-R vs. NG-L
+#                             Reward      Loss        | Difference
+# intercept                   0           0           | 0
+# framing                    -1          -1           | 0
+# correct_response           -1          -1           | 0
+# outcome                     1          -1           | 2
+# first_framing               0           0           | 0
+# framing:correct_response    1           1           | 0
+# framing:outcome            -1           1           |-2
+# correct_response:outcome   -1           1           |-2
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome   1          -1           | 2
+
+L_h2.3_bayesian <- "
+  2 * outcome1  + 
+  -2 * framing1:outcome1 + 
+  -2 * outcome1:correct_response1 + 
+  2 * framing1:outcome1:correct_response1 
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_acc_bayesian, L_h2.3_bayesian)
+
+# Plot
+recolor_plot(plot_acc_incongruent, c("white", "white", "red", "red"))
+
+# Result: proof for opposite effect to Pavlovian bias
+
+```
+
+### Hypothesis 3: Significant difference in Pavlovian bias effects
+
+3.1 There is a difference in Pavlovian bias between the Congruent and Incongruent framing for accuracy in G-R vs. G-L trials.
+
+```{r}
+# Accuracy Congruent vs. Incongruent for G-R vs. G-L 
+# (L_h1.1 - L_h2.1)
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     0           0           | 0
+# correct_response            0           0           | 0
+# outcome                     2           2           | 0
+# first_framing               0           0           | 0
+# framing:correct_response    0           0           | 0
+# framing:outcome             2          -2           | 4
+# correct_response:outcome    2           2           | 0
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome   2          -2           | 4
+
+L_h3.1_bayesian <- "
+  4 * framing1:outcome1  + 
+  4 * framing1:outcome1:correct_response1
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_acc_bayesian, L_h3.1_bayesian)
+
+# Plots
+combine_plots(
+  recolor_plot(plot_acc_congruent, c("brown", "brown", "white", "white")),
+  recolor_plot(plot_acc_incongruent, c("red", "red", "white", "white")),
+  type = "acc"
+)
+
+# Result: proof for Pavlovian bias
+
+```
+
+3.2 There is a difference in Pavlovian bias between the Congruent and Incongruent framing for response times in G-R vs. G-L trials.
+
+```{r}
+# RT Congruent vs. Incongruent for G-R vs. G-L
+# (L_h1.2 - L_h2.2)
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     0           0           | 0
+# outcome                     2           2           | 0
+# first_framing               0           0           | 0
+# framing:outcome             2          -2           | 4
+# framing:first_framing       0           0           | 0
+
+L_h3.2_bayesian <- "
+  4 * framing1:outcome1
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_rt_bayesian, L_h3.2_bayesian)
+
+# Plots
+combine_plots(
+  recolor_plot(plot_rt_congruent, c("brown", "brown")),
+  recolor_plot(plot_rt_incongruent, c("red", "red")),
+  type = "rt"
+)
+
+# Result: proof for Pavlovian bias
+
+```
+
+3.3 There is a difference in Pavlovian bias between the Congruent and Incongruent framing for accuracy in NG-R vs. NG-L trials.
+
+```{r}
+# Accuracy Congruent vs. Incongruent for NG-R vs. NG-L
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     0           0           | 0
+# correct_response            0           0           | 0
+# outcome                     2           2           | 0
+# first_framing               0           0           | 0
+# framing:correct_response    0           0           | 0
+# framing:outcome             2          -2           | 4
+# correct_response:outcome   -2          -2           | 0
+# framing:first_framing       0           0           | 0
+# framing:corr_resp:outcome  -2           2           |-4
+
+L_h3.3_bayesian <- "
+  4 * framing1:outcome1  + 
+  -4 * framing1:outcome1:correct_response1
+  = 0
+"
+
+# Hypothesis test
+brms::hypothesis(fit_acc_bayesian, L_h3.2_bayesian)
+
+# Plots
+combine_plots(
+  recolor_plot(plot_acc_congruent, c("white", "white", "brown", "brown")),
+  recolor_plot(plot_acc_incongruent, c("white", "white", "red", "red")),
+  type = "acc"
+)
+
+# !!
+
+```
+
+### Hypothesis 4: Lasting effect of first framing
+
+```{r}
+L_h4_acc_bayesian <- "framing1:first_framing1 = 0"
+brms::hypothesis(fit_acc_bayesian, L_h4_acc_bayesian)
+
+L_h4_rt_bayesian <- "framing1:first_framing1 = 0"
+brms::hypothesis(fit_rt_bayesian, L_h4_rt_bayesian)
+
+# !!
+
+```

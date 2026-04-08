@@ -1,7 +1,7 @@
 ------------------------------------------------------------------------
 
 ---
-title: "Data analysis of [TITLE]"
+title: "Data Analysis of Reframing Pavlovian Bias: Semantic Framing Reshapes Action-Valence Associations in a Go/NoGo Task"
 format: html
 editor: visual
 ---

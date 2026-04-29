@@ -6,7 +6,7 @@ format: html
 editor: visual
 ---
 
-# **Data analysis of \[TITLE\]**
+# **Data Analysis of Reframing Pavlovian Bias: Semantic Framing Reshapes Action-Valence Associations in a Go/NoGo Task**
 
 ```{r}
 # Required packages
@@ -19,7 +19,6 @@ if (!require(ggrain, quietly = TRUE)) {install.packages("ggrain")}
 if (!require(ggpubr, quietly = TRUE)) {install.packages("ggpubr")}
 if (!require(carData, quietly = TRUE)) {install.packages("carData")}
 if (!require(brms, quietly = TRUE)) {install.packages("brms")}
-if (!require(ggeffects, quietly = TRUE)) {install.packages("ggeffects")}
 
 ```
 
@@ -44,6 +43,12 @@ options(contrasts = c("contr.sum", "contr.poly"))
 df_data$outcome <- relevel(df_data$outcome, "reward")
 df_data$framing <- relevel(df_data$framing, "congruent")
 df_data$correct_response <- relevel(df_data$correct_response, "Go")
+
+df_data <- df_data |>
+  group_by(nr) |>
+  mutate(
+    total_trial_nr = row_number() - 1
+  )
 
 ```
 
@@ -497,8 +502,53 @@ acc_plot
 ### Log distribution of RT fits normal distribution better
 
 ```{r}
-ggqqplot((df_data |> filter(!is.na(rt)))$rt)
-ggqqplot(log((df_data |> filter(!is.na(rt)))$rt))
+rt_no_log <- ggqqplot((df_data |> filter(!is.na(rt)))$rt)
+rt_log <- ggqqplot(log((df_data |> filter(!is.na(rt)))$rt))
+
+rt_no_log
+rt_log
+
+```
+
+### Accuracy and RT across trials, per first_framing
+
+```{r}
+first_framing_plot_acc <- df_data |>
+  ggplot() +
+  aes(x = total_trial_nr, color = first_framing, group = first_framing, y = accuracy) +
+  stat_summary(fun.y = mean, geom = "point") +
+  geom_smooth(method = "gam", method.args = list(family = binomial(link = "logit"))) +
+  geom_vline(xintercept = n_trials/2-0.5, linetype="dashed") +
+  theme(
+    legend.position = "top",
+    panel.background = element_rect(fill = "white"),
+    panel.grid.major.y = element_line(colour = "lightgrey"),
+    panel.grid.minor.y = element_line(colour = "lightgrey")
+  ) +
+  scale_color_manual(name="First presented framing", labels=c("Congruent", "Incongruent"), values = c("#f8766d", "#00bfc4")) +
+  xlab("Trial number") +
+  ylab("Accuracy (%)") +
+  scale_y_continuous(labels = function(x)x * 100)
+
+first_framing_plot_rt <- df_data |>
+  filter(!is.na(rt)) |>
+  ggplot() +
+  aes(x = total_trial_nr, color = first_framing, group = first_framing, y = rt) +
+  stat_summary(fun.y = mean, geom = "point") +
+  geom_smooth(method = "gam", method.args = list(family = Gamma(link = "log"))) +
+  geom_vline(xintercept = n_trials/2-0.5, linetype="dashed") +
+  theme(
+    legend.position = "top",
+    panel.background = element_rect(fill = "white"),
+    panel.grid.major.y = element_line(colour = "lightgrey")
+  ) +
+  scale_color_manual(name="First presented framing", labels=c("Congruent", "Incongruent"), values = c("#f8766d", "#00bfc4")) +
+  xlab("Trial number") +
+  ylab("Response time (ms)") +
+  scale_y_continuous(labels = function(x)x * 1000)
+
+first_framing_plot_acc
+first_framing_plot_rt
 
 ```
 
@@ -527,6 +577,7 @@ ggqqplot(log((df_data |> filter(!is.na(rt)))$rt))
 download.file("https://raw.githubusercontent.com/JelleGoetschalckx/RPEP/main/models/fit_acc_model", destfile = "fit_acc_model.rds", mode = "wb")
 fit_acc <- readRDS("fit_acc_model.rds")
 summary(fit_acc)
+fit_acc
 
 ```
 
@@ -553,6 +604,7 @@ summary(fit_acc)
 download.file("https://raw.githubusercontent.com/JelleGoetschalckx/RPEP/main/models/fit_rt_model", destfile = "fit_rt_model.rds", mode = "wb")
 fit_rt <- readRDS("fit_rt_model.rds")
 summary(fit_rt)
+fit_rt
 
 ```
 
@@ -787,7 +839,7 @@ combine_plots(
 L_h3.2 <- L_h1.2 - L_h2.2
 
 # Hypothesis test
-car::linearHypothesis(fit_rt$full_model, L_h3.2)
+car::linearHypothesis(fit_rt$full_model, L_h3.2, test = "F")
 
 # Plots
 combine_plots(
@@ -833,75 +885,45 @@ combine_plots(
 
 ```
 
-### Hypothesis 4: Interaction effect framing and first framing
+### Hypothesis 4: Order effect caused by first framing
 
 ```{r}
-L_h4_acc <- c(0, 0, 0, 0, 0, 0, 0, 0, 1, 0)
+# Difference accuracy congruent vs incongruent, when starting with the corresponding framing
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     1          -1           | 2
+# correct_response            0           0           | 0
+# outcome                     0           0           | 0
+# first_framing               1          -1           | 2
+# framing:correct_response    0           0           | 0
+# framing:outcome             0           0           | 0
+# correct_response:outcome    0           0           | 0
+# framing:first_framing       1           1           | 0
+# framing:corr_resp:outcome   0           0           | 0
+
+# Difference rt congruent vs incongruent, when starting with the corresponding framing
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     1          -1           | 2
+# outcome                     0           0           | 0
+# first_framing               1          -1           | 2
+# framing:outcome             0           0           | 0
+# framing:first_framing       1           1           | 0
+
+L_h4_acc <- c(0, 2, 0, 0, 2, 0, 0, 0, 0, 0)
 car::linearHypothesis(fit_acc$full_model, L_h4_acc)
 
-L_h4_rt <- c(0, 0, 0, 0, 0, 1)
-car::linearHypothesis(fit_rt$full_model, L_h4_rt)
+L_h4_rt <- c(0, 2, 0, 2, 0, 0)
+car::linearHypothesis(fit_rt$full_model, L_h4_rt, test = "F")
 
-# Significant effect, but this is likely due to practice effects. This is visible in the plots below.
+# Result: no significant effect for accuracy, barely significant effect for rt
 
 ```
 
 ```{r}
-interaction.plot(
-  x.factor = factor(df_data$framing==df_data$first_framing, levels=c(TRUE, FALSE)),
-  xlab = "",
-  trace.factor = df_data$first_framing,
-  trace.label = "First framing",
-  response = df_data$accuracy,
-  ylab = "Accuracy (%)",
-  col = c("pink", "blue"),
-  lty = 1,
-  lwd = 2,
-  xaxt = "n"
-)
-mtext("Time", side = 1, line = 1)
-
-interaction.plot(
-  x.factor = df_data$trial_nr,
-  xlab = "",
-  trace.factor = df_data$first_framing,
-  trace.label = "First framing",
-  response = df_data$accuracy,
-  ylab = "Accuracy (%)",
-  col = c("pink", "blue"),
-  lty = 1,
-  lwd = 2,
-  xaxt = "n"
-)
-mtext("Time", side = 1, line = 1)
-
-interaction.plot(
-  x.factor = factor((df_data|>filter(!is.na(rt)))$framing==(df_data|>filter(!is.na(rt)))$first_framing, levels=c(TRUE, FALSE)),
-  xlab = "",
-  trace.factor = (df_data|>filter(!is.na(rt)))$first_framing,
-  trace.label = "First framing",
-  response = (df_data|>filter(!is.na(rt)))$rt,
-  ylab = "Response time (ms)",
-  col = c("pink", "blue"),
-  lty = 1,
-  lwd = 2,
-  xaxt = "n"
-)
-mtext("Time", side = 1, line = 1)
-
-interaction.plot(
-  x.factor = (df_data|>filter(!is.na(rt)))$trial_nr,
-  xlab = "",
-  trace.factor = (df_data|>filter(!is.na(rt)))$first_framing,
-  trace.label = "First framing",
-  response = (df_data|>filter(!is.na(rt)))$rt,
-  ylab = "Response time (ms)",
-  col = c("pink", "blue"),
-  lty = 1,
-  lwd = 2,
-  xaxt = "n"
-)
-mtext("Time", side = 1, line = 1)
+# Plots
+first_framing_plot_acc
+first_framing_plot_rt
 
 ```
 
@@ -1272,19 +1294,47 @@ combine_plots(
   type = "acc"
 )
 
-# !!
+# Result: proof for Pavlovian bias
 
 ```
 
-### Hypothesis 4: Lasting effect of first framing
+### Hypothesis 4: Order effect caused by first framing
 
 ```{r}
-L_h4_acc_bayesian <- "framing1:first_framing1 = 0"
+# Difference accuracy congruent vs incongruent, when starting with the corresponding framing
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     1          -1           | 2
+# correct_response            0           0           | 0
+# outcome                     0           0           | 0
+# first_framing               1          -1           | 2
+# framing:correct_response    0           0           | 0
+# framing:outcome             0           0           | 0
+# correct_response:outcome    0           0           | 0
+# framing:first_framing       1           1           | 0
+# framing:corr_resp:outcome   0           0           | 0
+
+# Difference rt congruent vs incongruent, when starting with the corresponding framing
+#                             Congruent   Incongruent | Difference
+# intercept                   0           0           | 0
+# framing                     1          -1           | 2
+# outcome                     0           0           | 0
+# first_framing               1          -1           | 2
+# framing:outcome             0           0           | 0
+# framing:first_framing       1           1           | 0
+
+L_h4_acc_bayesian <- "2 * framing1 + 2 * first_framing1 = 0"
 brms::hypothesis(fit_acc_bayesian, L_h4_acc_bayesian)
 
-L_h4_rt_bayesian <- "framing1:first_framing1 = 0"
+L_h4_rt_bayesian <- "2 * framing1 + 2 * first_framing1 = 0"
 brms::hypothesis(fit_rt_bayesian, L_h4_rt_bayesian)
 
-# !!
+# Result: no proof for any differences
+
+```
+
+```{r}
+first_framing_plot_acc
+first_framing_plot_rt
 
 ```
